@@ -1,0 +1,10 @@
+# Kept out of the deployment bundle. None of it is served; excluding it keeps
+# the upload small and the function bundle clean.
+node_modules/
+tests/
+.github/
+README.md
+DEPLOY.md
+.env.example
+*.bak
+*.log

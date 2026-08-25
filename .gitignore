@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Vercel
+.vercel/
+
+# Environment — never commit a real key
+.env
+.env.local
+.env.*.local
+
+# Test output
+tests/shots/*.png
+test-results/
+playwright-report/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Working files
+*.bak
+*.log

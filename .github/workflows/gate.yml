@@ -1,0 +1,21 @@
+# The harness is the gate. Nothing merges or deploys on a red run.
+name: gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      # SwiftShader: CI runners have no GPU, and the engine must still boot.
+      - run: npm run test:ci
