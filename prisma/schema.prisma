@@ -163,13 +163,13 @@ enum TaskStatus {
 model KbEntry {
   id          String     @id @default(cuid())
   userId      String
-  /** Destination world id, e.g. "itachi". Scopes retrieval. */
+  /// Destination world id, e.g. "itachi". Scopes retrieval.
   world       String
   claim       String     @db.Text
   source      String?
   confidence  Confidence @default(MEDIUM)
   tags        String[]   @default([])
-  /** Claim text or id this entry replaces, recorded rather than overwritten. */
+  /// Claim text or id this entry replaces, recorded rather than overwritten.
   supersedes  String?
   committedBy String
   missionId   String?
