@@ -1,138 +1,207 @@
-# Loqi Omniverse OS
+# Loqi Omniverse — Nine Worlds Agentic OS
 
-A single-page WebGL omniverse — Earth orbit → Sol → Sagittarius A*, driven by
-one continuous scroll spine — with an agentic operator studio, a clearance gate,
-and a 135-case BDD harness that runs inside the page and gates the deploy.
+Full-stack Next.js 15 application: the Nine Worlds landing page, OAuth membership,
+a members-only ChatStudio, and the autonomous **Agentic Army** — nine specialised
+agents planned and reduced by the Sol Quasar command core.
 
-Three previously separate builds (the Gravitas lens monitor, the JLM
-orchestration OS, and the Cosmic OS unified shell) are merged here into one
-document with one scheduler, one pointer model and one gravitational field.
+```
+Landing (public)  →  OAuth gate  →  Members area
+                                     ├── ChatStudio   one agent, one thread, streaming
+                                     ├── War Room     all nine, one mission, parallel DAG
+                                     └── Settings     identity, mission history, roster
+```
 
 ---
 
-## Deploy
+## Architecture
+
+| Layer | Choice | Why |
+|---|---|---|
+| Framework | Next.js 15 App Router | Server Components for the shell, route handlers for SSE |
+| Auth | Auth.js v5 (`next-auth@beta`) | GitHub + Google OAuth, database sessions, edge-safe middleware split |
+| Database | Postgres + Prisma | Neon / Supabase / Vercel Postgres all work unchanged |
+| Model | Anthropic SDK, streaming | One `complete()` helper serves both chat and the army |
+| Styling | Tailwind + custom design tokens | No component library — the console aesthetic is bespoke |
+| Hosting | Vercel | `vercel.json` sets per-route `maxDuration`; dispatch gets 300s |
+
+### The Agentic Army
+
+Six files, in dependency order:
+
+| File | Responsibility |
+|---|---|
+| `src/lib/agents/types.ts` | Shared contracts — `AgentSpec`, `MissionPlan`, `ArmyEvent` |
+| `src/lib/agents/registry.ts` | **The nine worlds.** Single source of truth for prompts, capabilities, accents, tool budgets |
+| `src/lib/agents/calc.ts` | Recursive-descent arithmetic parser backing the `calculate` tool |
+| `src/lib/agents/tools.ts` | Tool definitions, capability-scoped granting, sandboxed execution |
+| `src/lib/agents/planner.ts` | Sol Quasar decomposes an objective into a validated task DAG |
+| `src/lib/agents/orchestrator.ts` | Concurrent dependency-aware scheduler + tool loop + report reduction |
+
+### Tools — what makes it agentic rather than talkative
+
+| Tool | Required capability | What it does |
+|---|---|---|
+| `kb_search` | memory, research, analyse, harvest, validate | Query the vault before asserting anything |
+| `kb_commit` | memory, harvest | Write a durable fact, recording supersessions rather than overwriting |
+| `web_fetch` | harvest, research | Fetch a public URL, HTML→text. SSRF-blocked, 15s timeout, size-capped |
+| `calculate` | metrics, analyse, build | Exact arithmetic via a real parser — never `eval` |
+| `emit_artifact` | build, write | Emit a downloadable file attached to the mission |
+
+`toolsForAgent()` computes the permitted set from the agent's declared
+capabilities at dispatch time, and `runTool()` re-checks it before execution. So
+the routing contract in `registry.ts` is enforced at the tool boundary too, not
+just at the planner. ZORO cannot reach the web; NARA cannot write to the vault.
+
+The tool loop lives in `completeFull()`: send → execute any `tool_use` blocks →
+append one `tool_result` turn → repeat, bounded by the agent's `maxToolRounds`.
+On hitting the ceiling it makes a final call with tools withheld, forcing an
+answer from what it has rather than looping forever.
+
+**The `calculate` tool never uses `eval`, `new Function`, or regex-sanitised
+eval.** Model output is untrusted input executing server-side with database
+access in scope, so `calc.ts` is a hand-written tokeniser and recursive-descent
+parser. `globalThis`, `constructor`, IIFEs, assignments and statement separators
+are all rejected at parse time — see `calc.test.ts`.
+
+**Execution model.** A task becomes eligible the moment every dependency has
+`SUCCEEDED`. Eligible tasks run concurrently up to `LOQI_MAX_CONCURRENCY`. A failed
+task marks its transitive dependents `SKIPPED` but sibling branches carry on — one
+dead branch never takes the mission with it, and the final report states plainly
+what it therefore cannot cover.
+
+**Planner safety.** `validatePlan()` runs Kahn's algorithm over the returned graph
+and rejects cycles, dangling dependencies, duplicate keys, unknown agents, and any
+attempt to assign field work to the command core. Malformed planner output gets one
+corrective retry, then falls back to a deterministic recon → assay → synthesis line
+so a planner outage can never take a mission down.
+
+**Context isolation.** Each agent sees its own brief plus the returns of its *direct*
+upstream dependencies — nothing else. This bounds the context window and stops
+unrelated branches contaminating one another.
+
+---
+
+## Local setup
 
 ```bash
-npm ci
-npm test                 # boots the page headless, gates on __LOQI_TEST__.fail === 0
-npx vercel deploy --prod
+npm install
+cp .env.example .env          # then fill it in — see below
+npx prisma db push            # create the schema
+npm run dev                   # http://localhost:3000
 ```
-
-`predeploy` is wired to `npm test`, so `npm run deploy` cannot ship a red build.
-
-There is no build step. The app is `index.html` plus a vendored `three` under
-`vendor/`; Vercel serves the directory as-is (`outputDirectory: "."`).
 
 ### Environment
 
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `ANTHROPIC_API_KEY` | for live chat | Read by `/api/chat` only. Never reaches the browser. |
-| `ANTHROPIC_MODEL` | optional | Server-selected allowlisted model; defaults to `claude-sonnet-5`. |
+| Variable | Where to get it |
+|---|---|
+| `AUTH_SECRET` | `openssl rand -base64 32` |
+| `AUTH_GITHUB_ID` / `_SECRET` | github.com/settings/developers → New OAuth App |
+| `AUTH_GOOGLE_ID` / `_SECRET` | console.cloud.google.com → Credentials → OAuth client |
+| `DATABASE_URL` | Neon, Supabase, or Vercel Postgres connection string |
+| `ANTHROPIC_API_KEY` | console.anthropic.com |
 
-Set it in **Project → Settings → Environment Variables**. Without it the studio
-still runs: the provider falls back to the **Simulacrum**, a deterministic
-offline responder that composes the same system prompt and applies the same
-skill contracts, and makes no network calls at all.
-
-### Providers
-
-Open the Studio → **Harness** tab:
-
-- **Simulacrum** — offline, deterministic, zero network. The default.
-- **Server proxy (`/api/chat`)** — the production path. The key stays on the
-  server function; the browser never sees it.
-
----
-
-See **[DEPLOY.md](DEPLOY.md)** for the full runbook — Git, CI, environment
-variables, and how to verify a live deployment.
-
----
-
-## Layout
+OAuth callback URLs — register **both**:
 
 ```
-index.html            the entire app — 8 IIFE "PARTs" over one LX kernel
-vendor/               pinned three.module.js, served with immutable caching
-api/chat.js           Vercel function: allowlists the model, caps tokens, streams SSE
-scripts/serve.mjs      dependency-free local static server
-tests/gate.mjs        the deploy gate — static server + headless Chromium + exit code
-tests/surfaces.mjs    captures loader / landing / gate / studio for visual diffing
-vercel.json           CSP, security headers, cache policy
-.github/workflows/    the same gate, on every push and pull request
-.env.example          the one variable that matters, and where it goes
-DEPLOY.md             cold clone → live URL
+http://localhost:3000/api/auth/callback/github
+https://YOUR-DOMAIN.vercel.app/api/auth/callback/github
 ```
 
-### The LX kernel
-
-Everything hangs off one global namespace and one requestAnimationFrame loop:
-
-- `LX.every(fn, name)` — the single scheduler. Per-task throws are caught and
-  logged so one broken subsystem cannot stop the frame.
-- `LX.on` / `LX.emit` — the event bus.
-- `LX.store` — namespaced storage in three tiers: memory, `sessionStorage`,
-  `localStorage`. Callers choose with `store.set(k, v, ephemeral)`.
-- `LX.ptr` — one pointer model. Nothing else registers a `pointermove` listener
-  for position; consumers read `LX.ptr` from the tick.
-- `LX.lensField(nx, ny, out)` — one deflection field, two couplings. Light gets
-  `4GM/c²b`; matter gets half that, because general relativity says so. The dust
-  and the shader therefore agree by construction rather than by tuning.
-
-### The harness
-
-135 cases in 16 groups, asserting against the live DOM and the live engine —
-not mocks. Run them from the page with `?test=1`, the **⧉ TESTS** chip, the `T`
-key, or `/tests` in the Studio. Results publish to `window.__LOQI_TEST__`.
-
-`tests/gate.mjs` additionally fails on any uncaught page error. This matters:
-the scheduler swallows per-task throws by design, so a dead subsystem is silent.
-It is exactly how a whole 2D layer once ran broken for a full build cycle.
+Set `LOQI_MEMBER_ALLOWLIST` to gate the members area, e.g. `@worley.com,me@gmail.com`.
+Leave it blank to allow any authenticated user.
 
 ---
 
-## Hardening notes
+## Deploy to Vercel
 
-Fixes carried in this merge, each pinned by a case in the
-`hardening regressions` group:
+```bash
+gh repo create loqi-omniverse --private --source=. --push
+vercel link && vercel --prod
+```
 
-- **Credentials.** No API key is read from the query string — a URL lands in
-  history, referrers and every access log in between. No key is written to
-  browser storage because there is no browser credential surface. Production
-  routes through `/api/chat` only.
-- **Double escaping.** The simulacrum pre-escaped output that `md()` then
-  escaped again, so every quote rendered as `&quot;`.
-- **Session persistence.** "Remember this console" was recorded and then
-  ignored; an unchecked box still left a session in `localStorage` forever. It
-  now selects the storage tier.
-- **Window drag.** The un-snap anchor reduced algebraically to `r.left`, so a
-  maximised window always jumped its left edge to the cursor.
-- **Streaming re-render.** The transcript was re-parsed on every SSE delta —
-  quadratic in answer length. Paints now coalesce to one per frame, and back off
-  to ~8 Hz past 6 kB.
-- **Pointer load.** Four window-level `pointermove` listeners, one walking a
-  seven-selector `closest()` on every sample. Position now comes from `LX.ptr`
-  and hit-tests happen once per frame, only when the target changed.
-- **Reduced motion.** `prefers-reduced-motion` was honoured in CSS and read
-  nowhere in JS. It now seeds `lowFX`, collapses the engine to its cheapest
-  profile, stops the autopilot, and tracks changes live.
-- **Teardown.** There was not one `.dispose()` in the build. `COSMOS.dispose()`
-  walks the graph, drops geometries, materials, textures and render targets, and
-  releases the WebGL context; it runs on `pagehide`.
+Then in the Vercel dashboard:
 
-## Security headers
+1. **Storage → Create Database → Postgres** (or paste a Neon `DATABASE_URL`).
+2. **Settings → Environment Variables** — add every key from `.env.example`.
+   Set `AUTH_URL` and `NEXT_PUBLIC_APP_URL` to your production domain.
+3. Add the production callback URL to both OAuth apps.
+4. Run `npx prisma db push` once against the production `DATABASE_URL`.
 
-`vercel.json` sets CSP, HSTS, `X-Content-Type-Options`, `Referrer-Policy`,
-`frame-ancestors 'none'` and a `Permissions-Policy` denying geolocation,
-microphone, camera and payment.
+The repository ships a `.github/workflows/gate.yml` quality gate for pull requests and pushes. Production deployment is intended to use Vercel's Git integration after the required environment variables and database are configured; see `DEPLOY.md`.
 
-The clearance screen intentionally emulates an operator workflow; it is not a
-production identity boundary. Wire a verified identity provider and enforce
-authorization on the server before connecting real tools, data, or operators.
-See **[SECURITY.md](SECURITY.md)** for the deployment trust boundaries.
+---
 
-`script-src` keeps `'unsafe-inline'`: the app is deliberately one document with
-inline `<script>` blocks. If that trade is unacceptable for your deployment,
-extract the eight PARTs to files under `/js` and drop the directive — the
-harness will tell you immediately if the extraction broke anything.
+## Porting your WebGL scene
+
+The landing hero renders a placeholder canvas. Your standalone HTML drops into
+`src/components/landing/OmniverseCanvas.tsx` — the file carries a step-by-step
+migration recipe in its header comment. See **`PORTING.md`** for the full walkthrough
+including the CSP note (third-party CDN scripts are blocked by default).
+
+---
+
+## Re-skinning the army
+
+Everything the user sees about an agent — world name, callsign, accent colour,
+capabilities, system prompt — lives in `src/lib/agents/registry.ts`. Edit that one
+file and the landing grid, the ChatStudio picker, the planner roster and the war
+room all follow. Nothing else hardcodes an agent.
+
+Adding a tenth world: add the entry, add its id to the `AgentId` union in `types.ts`,
+and update the count assertion in `registry.test.ts`. That's the whole change.
+
+---
+
+## Scripts
+
+| Command | Effect |
+|---|---|
+| `npm run dev` | Dev server |
+| `npm run build` | `prisma generate && next build` |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm test` | Vitest — 5 suites: graph validation, registry, tools, calc, markdown, rate limit |
+| `npm run verify` | typecheck + lint + test, the same gate CI runs |
+| `npm run db:studio` | Prisma Studio |
+
+---
+
+## Routes
+
+| Route | Access | Purpose |
+|---|---|---|
+| `/` | public | Landing — nine worlds, doctrine |
+| `/signin` | public | OAuth gate |
+| `/studio` | member | ChatStudio — one agent, one thread |
+| `/army` | member | War Room — mission dispatch |
+| `/missions`, `/missions/[id]` | member | Mission archive and full record |
+| `/vault` | member | Knowledge base browser |
+| `/settings` | member | Identity, usage, roster |
+| `/api/chat` | member | SSE streaming chat |
+| `/api/agents/dispatch` | member | SSE mission execution |
+| `/api/kb` | member | KB read / manual commit / delete |
+| `/api/artifacts/[id]` | member | Artefact download |
+| `/api/missions/sweep` | cron | Reaps missions abandoned by a dead function |
+| `/api/health` | public | Liveness + dependency probe |
+
+## Production notes
+
+- **Rate limits** are in-memory (`src/lib/server/ratelimit.ts`) — correct for a single
+  region. Swap the `Map` for Upstash Redis when you scale past one instance; the call
+  signature is unchanged.
+- **Chat: 40 req/min per user. Missions: 5 per 10 min per user.** Missions are far more
+  expensive; tune both in the route handlers.
+- **CSP** is set in `next.config.mjs` and blocks third-party script hosts by design.
+- **`maxDuration`** for dispatch is 300s, which requires a Vercel Pro plan. On Hobby
+  the ceiling is 60s — either shrink the plans or move dispatch to a background worker.
+- **System prompts never reach the client.** `/api/agents` strips them before serialising.
+- **`/api/missions/sweep`** is a cron target (every 15 min). A function that dies
+  mid-mission leaves rows stuck in `RUNNING` with no client left to update them;
+  the sweep marks them failed so the UI stays truthful. Set `CRON_SECRET` in
+  production — the route checks it as a bearer token.
+- **`web_fetch` blocks SSRF targets**: loopback, RFC1918, link-local, `.internal`,
+  `.local`, and cloud metadata hostnames. Review `assertPublicUrl()` before
+  loosening it.
+- **The markdown renderer is hand-written** (`src/components/ui/Markdown.tsx`) and
+  streaming-safe: an unterminated code fence renders as an open block rather than
+  swallowing the document. Nothing uses `dangerouslySetInnerHTML`, so model output
+  cannot inject markup.

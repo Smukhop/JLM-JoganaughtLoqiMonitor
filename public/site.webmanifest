@@ -1,0 +1,12 @@
+{
+  "name": "Loqi Omniverse — Nine Worlds Agentic OS",
+  "short_name": "Loqi",
+  "description": "Nine autonomous agent worlds under Sol Quasar command.",
+  "start_url": "/studio",
+  "display": "standalone",
+  "background_color": "#05060a",
+  "theme_color": "#05060a",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

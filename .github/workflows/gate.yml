@@ -1,21 +1,47 @@
-# The harness is the gate. Nothing merges or deploys on a red run.
-name: gate
+name: Loqi quality gate
 
 on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
-  harness:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
+    env:
+      AUTH_SECRET: ci-only-not-a-production-secret-0123456789
+      AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/loqi
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm ci --no-audit --no-fund
-      - run: npx playwright install --with-deps chromium
-      # SwiftShader: CI runners have no GPU, and the engine must still boot.
-      - run: npm run test:ci
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Production build
+        run: npm run build
