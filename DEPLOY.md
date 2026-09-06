@@ -1,135 +1,70 @@
-# Deploy runbook
+# Loqi Omniverse — Vercel deployment runbook
 
-From a cold clone to a live URL. There is no build step — the app is one HTML
-document plus a vendored `three`, so most of the elapsed time is dependency installation.
+This repository is a Next.js 15 App Router application. The production entry point is `src/app/page.tsx`; Vercel should import the repository root directly (no subdirectory and no static `index.html` output directory).
 
----
+## 1. Vercel project
 
-## 1 · Get it into Git
+Import `Smukhop/JLM-JoganaughtLoqiMonitor` into Vercel and keep **Framework Preset = Next.js**. `vercel.json` already defines `npm ci`, the Prisma + Next build, function duration overrides, the primary region, and the mission sweep cron.
 
-```bash
-unzip loqi-omniverse-vercel.zip -d loqi-omniverse
-cd loqi-omniverse
-git init -b main
-git add -A
-git commit -m "Loqi Omniverse OS — unified build"
-```
+## 2. Required production environment variables
 
-`.gitignore` already excludes `node_modules/`, `.vercel/`, captured screenshots
-and `*.bak`. Confirm nothing unexpected went in before you push:
+Copy the keys from `.env.example` into Vercel Project Settings → Environment Variables.
 
-```bash
-git ls-files | head -40
-```
+Required for the full authenticated application:
 
-Push to a new empty GitHub repo:
+- `AUTH_SECRET`
+- `AUTH_URL`
+- `NEXT_PUBLIC_APP_URL`
+- at least one OAuth pair: `AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET` or `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET`
+- `DATABASE_URL`
+- `ANTHROPIC_API_KEY`
+- `CRON_SECRET`
 
-```bash
-git remote add origin git@github.com:Smukhop/JLM-JoganaughtLoqiMonitor.git
-git push -u origin main
-```
+Recommended operational settings are also documented in `.env.example` (`LOQI_MODEL_*`, concurrency/task limits, log level, and optional member allowlist).
 
-## 2 · Prove it green locally
+For production, set both URL variables to the canonical HTTPS deployment URL, not `localhost`.
+
+## 3. Database
+
+Provision a PostgreSQL database (Neon, Supabase, or another Vercel-compatible Postgres provider), set `DATABASE_URL`, then initialize the schema once from a trusted shell:
 
 ```bash
-npm ci
-npx playwright install --with-deps chromium   # first run only
-npm test
+npx prisma db push
 ```
 
-Expected tail:
+Use migrations instead of `db push` once schema evolution is managed as a production release process.
 
-```
-135/135 passed · 0 failed
-GATE: GREEN — safe to deploy
-```
+## 4. OAuth callbacks
 
-The gate fails on a single assertion **or** a single uncaught page error. Do not
-deploy around a red gate — the rAF scheduler catches per-task throws by design,
-so a dead subsystem is otherwise completely silent.
+Register the production callbacks with the providers you enable:
 
-## 3 · Deploy
-
-```bash
-npx vercel            # first run: links the project, deploys a preview
-npx vercel --prod
+```text
+https://YOUR-DOMAIN/api/auth/callback/github
+https://YOUR-DOMAIN/api/auth/callback/google
 ```
 
-Or import the GitHub repo at vercel.com/new. The framework preset is
-**Other**; leave Build Command and Output Directory blank — `vercel.json`
-sets `outputDirectory: "."` already.
+The public landing page works without signing in, but `/studio`, `/army`, `/missions`, `/vault`, and `/settings` are members-only.
 
-`npm run deploy` runs the gate first via `predeploy`, so it cannot ship red.
+## 5. Pre-production gate
 
-## 4 · Wire the key (optional)
+GitHub Actions runs `.github/workflows/gate.yml` on pull requests and on `main`. It installs with the committed lockfile, generates Prisma Client, typechecks, lints, tests, and performs a production Next.js build.
 
-Live chat needs one variable:
+Do not promote a release while this gate is red.
 
-**Project → Settings → Environment Variables**
+## 6. Deploy and smoke test
 
-| Name | Value | Environments |
-| --- | --- | --- |
-| `ANTHROPIC_API_KEY` | your key | Production, Preview, Development |
-| `ANTHROPIC_MODEL` | `claude-sonnet-5` (optional) | Production, Preview, Development |
+After the project is linked and environment variables are configured, merge the release branch into `main` to let Vercel's Git integration create the production deployment.
 
-Redeploy after adding it — Vercel does not inject new variables into an existing
-deployment.
+Verify:
 
-Then in the app: **Studio → Harness → Provider → Server proxy (`/api/chat`)**.
+1. `/` renders the v2.1.0 Nine Worlds landing page.
+2. `/signin` shows the configured provider(s).
+3. `/api/health` returns `status: "ok"`; `degraded` means one or more dependencies are not configured or reachable.
+4. Authenticated navigation reaches `/studio` and `/army`.
+5. A small ChatStudio request streams successfully.
+6. A small mission reaches a terminal state and appears in `/missions`.
+7. The cron endpoint is protected by `CRON_SECRET` and Vercel shows the configured schedule.
 
-Skip this entirely if you want a pure front-end demo. The Simulacrum is the
-default, composes the same system prompt, applies the same skill contracts, and
-makes no network calls at all.
+## 7. Vercel plan note
 
-## 5 · Verify the deployment
-
-```bash
-curl -sI https://<your-app>.vercel.app | grep -i 'content-security-policy\|strict-transport'
-```
-
-Then open `https://<your-app>.vercel.app/?test=1` — the harness runs in the
-browser and paints its own report. 135 green is the same gate CI runs.
-
-Check the proxy is alive:
-
-```bash
-curl -s -X POST https://<your-app>.vercel.app/api/chat \
-  -H 'content-type: application/json' \
-  -d '{"messages":[{"role":"user","content":"ping"}],"max_tokens":128}' | head -c 400
-```
-
-- streaming SSE → key is wired
-- `503 No ANTHROPIC_API_KEY` → variable missing, or you did not redeploy
-- `429` → the per-IP token bucket; wait a few seconds
-
-## 6 · CI
-
-`.github/workflows/gate.yml` runs the same gate on every push to `main` and
-every pull request, on SwiftShader (CI runners have no GPU — the engine still
-has to boot). Make it a required status check:
-
-**GitHub → Settings → Branches → Add branch protection rule → `main` →
-Require status checks to pass → `harness`**
-
----
-
-## Troubleshooting
-
-**Blank page, no errors.** Almost always the importmap: `vendor/three.module.js`
-did not upload. Check `.vercelignore` has not grown a `vendor` entry, and that
-`vendor/` is tracked in Git (`git ls-files vendor | wc -l` should be 7).
-
-**Gate times out in CI.** Raise the job `timeout-minutes`. Software rendering on
-a cold runner can take 60–90s just to reach `cosmos:ready`.
-
-**Fonts do not load.** `style-src` and `font-src` in `vercel.json` allow only
-`fonts.googleapis.com` and `fonts.gstatic.com`. If you swap the font stack,
-widen those two directives — nothing else.
-
-**Chat returns 503.** `ANTHROPIC_API_KEY` is not available to the deployed
-function, or the project was not redeployed after adding it. The Simulacrum
-remains available without a credential.
-
-**Auth appears to accept demo users.** That is intentional for previewing the
-workflow. It is not production authentication; connect a verified identity
-provider before attaching private data or operational tools.
+`src/app/api/agents/dispatch/route.ts` is configured for a 300-second maximum duration. Confirm the selected Vercel plan supports that duration; otherwise reduce mission duration/concurrency or move long-running dispatch to a background execution model before production traffic.

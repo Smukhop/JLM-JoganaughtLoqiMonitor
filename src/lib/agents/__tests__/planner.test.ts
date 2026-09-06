@@ -1,0 +1,5 @@
+import { describe, expect, it } from 'vitest';
+import { validatePlan } from '../planner';
+import type { PlannedTask } from '../types';
+const task=(key:string,dependsOn:string[]=[],agentId='itachi'):PlannedTask=>({key,agentId:agentId as PlannedTask['agentId'],title:`Task ${key}`,brief:'brief',dependsOn});
+describe('validatePlan',()=>{it('accepts a valid DAG',()=>expect(validatePlan([task('a'),task('b'),task('c',['a','b'],'nara')])).toHaveLength(3));it('rejects a cycle',()=>expect(()=>validatePlan([task('a',['b']),task('b',['a'])])).toThrow(/cycle/i));it('rejects a self-dependency',()=>expect(()=>validatePlan([task('a',['a'])])).toThrow(/itself/i));it('rejects a dangling dependency',()=>expect(()=>validatePlan([task('a',['ghost'])])).toThrow(/unknown key/i));it('rejects duplicate keys',()=>expect(()=>validatePlan([task('a'),task('a')])).toThrow(/duplicate/i));it('rejects an unknown agent',()=>expect(()=>validatePlan([task('a',[],'nobody')])).toThrow(/unknown agent/i));it('refuses to give command field work',()=>expect(()=>validatePlan([task('a',[],'sol-quasar')])).toThrow(/field work/i));});
